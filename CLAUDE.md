@@ -6,36 +6,65 @@ Chat-first web app for middle-income Mexicans (MXN $25k–$80k/month).
 AI coach powered by Claude API + bank data via Finerio Connect.
 MXN $99/month subscription with 30-day free trial.
 
-**Stage:** Pre-MVP (planning/documentation phase — no implementation code yet).
-
 ## Repository Structure
 
 ```
 tio-richie/
-├── CLAUDE.md                                # Project instructions for AI assistants
-├── TioRichie_MVP_PRD.docx                   # Full MVP Product Requirements Document
-├── M1_TioRichie_or_AdrianUrenda v2.pdf      # Problem definition & market research (SCARE model)
-├── M2_TioRichie_or_AdrianUrenda.pdf         # Competitive landscape analysis (12 competitors)
-├── M3_TioRichie_or_Adrian Urenda.xlsx       # Customer discovery (12 interviews)
-└── .git/
+├── docker-compose.yml                       # Local dev: PostgreSQL, Redis, backend, frontend
+├── .env.example                             # Shared env vars for Docker Compose
+├── backend/                                 # Node.js (Express) API
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── Dockerfile
+│   └── src/
+│       ├── index.ts                         # Express server entry point
+│       ├── config.ts                        # Environment configuration
+│       ├── db/
+│       │   ├── index.ts                     # PostgreSQL connection pool
+│       │   └── migrations/
+│       │       └── 001_initial_schema.sql   # Full data model (9 tables)
+│       ├── routes/
+│       │   ├── auth.ts                      # Register, login, me (JWT)
+│       │   └── health.ts                    # Health check endpoint
+│       ├── middleware/
+│       │   └── auth.ts                      # JWT verification middleware
+│       └── types/
+│           └── index.ts                     # Shared TypeScript types
+├── frontend/                                # Next.js 15 (App Router)
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── next.config.ts
+│   ├── tailwind.config.ts
+│   ├── Dockerfile
+│   └── src/
+│       ├── app/
+│       │   ├── layout.tsx                   # Root layout (Spanish lang)
+│       │   ├── page.tsx                     # Home (redirects if unauthenticated)
+│       │   ├── globals.css                  # Tailwind directives
+│       │   ├── login/page.tsx               # Login form
+│       │   └── register/page.tsx            # Registration form (30-day trial)
+│       └── lib/
+│           └── api.ts                       # Backend API fetch wrapper
+├── TioRichie_MVP_PRD.docx                   # Full MVP PRD
+├── M1_TioRichie_or_AdrianUrenda v2.pdf      # Problem definition & market research
+├── M2_TioRichie_or_AdrianUrenda.pdf         # Competitive landscape analysis
+└── M3_TioRichie_or_Adrian Urenda.xlsx       # Customer discovery interviews
 ```
 
-No source code, configuration files, or package.json exist yet. The repository currently contains only strategic documentation.
-
-## Planned Tech Stack
+## Tech Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Frontend | Next.js (React), TypeScript, Tailwind CSS | Chat UI, onboarding, settings |
-| Backend | Node.js (Fastify or Express), TypeScript | API, business logic, financial engine |
-| Database | PostgreSQL (managed) | Users, transactions, goals, budgets |
-| Cache | Redis | Sessions, safe-to-spend cache, rate limiting |
-| Object Storage | S3-compatible | CSV uploads, data exports |
-| LLM | Anthropic Claude API (Sonnet) | Conversational coaching |
-| Bank Data | Finerio Connect API | Account aggregation, transactions |
-| Payments | Stripe | Subscriptions (MXN $99/mo), OXXO support |
-| CI/CD | GitHub Actions | Testing, deployment |
-| Monitoring | Sentry + Datadog (or equivalent) | Errors, performance, uptime |
+| Frontend | Next.js 15 (React 19), TypeScript, Tailwind CSS 3 | Chat UI, onboarding, settings |
+| Backend | Node.js (Express), TypeScript | API, business logic, financial engine |
+| Database | PostgreSQL 16 | Users, transactions, goals, budgets |
+| Cache | Redis 7 | Sessions, safe-to-spend cache, rate limiting |
+| Object Storage | S3-compatible | CSV uploads, data exports (not yet wired) |
+| LLM | Anthropic Claude API (Sonnet) | Conversational coaching (not yet wired) |
+| Bank Data | Finerio Connect API | Account aggregation, transactions (not yet wired) |
+| Payments | Stripe | Subscriptions (MXN $99/mo), OXXO support (not yet wired) |
+| CI/CD | GitHub Actions | Testing, deployment (not yet configured) |
+| Monitoring | Sentry + Datadog (or equivalent) | Errors, performance, uptime (not yet configured) |
 
 ## Architecture Principles
 
@@ -95,22 +124,36 @@ Safe-to-Spend Today = (Remaining Disposable Income − Committed Upcoming Expens
 - Emotional safety: empathetic response + professional resource suggestions if user expresses distress
 - Backend validation layer checks responses before delivery
 
-## Code Style (for implementation)
+## Code Style
 
-- TypeScript strict mode
-- ES modules (`import`/`export`)
+- TypeScript strict mode (`"strict": true` in both tsconfig files)
+- ES modules (`import`/`export`) — backend uses `"type": "module"` with NodeNext resolution
 - Functional React components with hooks
 - Tailwind for styling — no separate CSS files
 - All user-facing text in Spanish (Mexican)
 - Mobile-first responsive design (375px–428px primary, desktop secondary)
 - WCAG 2.1 AA accessibility compliance
 
-## Commands (planned)
+## Commands
 
 ```bash
-npm run dev     # Start dev server
-npm run test    # Run tests
-npm run lint    # Lint check
+# Full stack (Docker Compose)
+docker compose up              # Start all services (db, redis, backend, frontend)
+docker compose up db redis     # Start only infrastructure (run frontend/backend locally)
+docker compose down -v         # Stop all and remove volumes (resets DB)
+
+# Backend (from backend/)
+npm run dev                    # Start with hot reload (tsx watch)
+npm run build                  # Compile TypeScript to dist/
+npm run start                  # Run compiled output
+npm run lint                   # ESLint check
+npm test                       # Run tests (not yet configured)
+
+# Frontend (from frontend/)
+npm run dev                    # Next.js dev server (port 3000)
+npm run build                  # Production build
+npm run start                  # Serve production build
+npm run lint                   # Next.js lint
 ```
 
 ## Key Documentation
