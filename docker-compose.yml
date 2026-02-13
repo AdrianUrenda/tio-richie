@@ -36,6 +36,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-tiorichie}:${POSTGRES_PASSWORD:-tiorichie_dev}@db:5432/${POSTGRES_DB:-tiorichie}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PORT: "4000"
     volumes:
       - ./backend/src:/app/src

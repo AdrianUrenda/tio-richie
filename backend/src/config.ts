@@ -5,4 +5,5 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || "change-me-in-production",
   jwtExpiresIn: 7 * 24 * 60 * 60, // 7 days in seconds
   bcryptRounds: 12,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
 };

@@ -14,3 +14,18 @@ export interface JwtPayload {
   userId: string;
   email: string;
 }
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+export interface ConversationRow {
+  id: string;
+  user_id: string;
+  messages: ChatMessage[];
+  token_count: number;
+  created_at: string;
+  updated_at: string;
+}
