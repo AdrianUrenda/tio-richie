@@ -37,6 +37,9 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FINERIO_API_URL: ${FINERIO_API_URL:-https://api.finerio.mx/v2}
+      FINERIO_API_KEY: ${FINERIO_API_KEY:-}
+      FINERIO_WEBHOOK_SECRET: ${FINERIO_WEBHOOK_SECRET:-}
       PORT: "4000"
     volumes:
       - ./backend/src:/app/src

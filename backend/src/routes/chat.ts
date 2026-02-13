@@ -4,6 +4,7 @@ import { pool } from "../db/index.js";
 import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
 import { buildSystemPrompt } from "../prompts/tio-richie.js";
+import { buildFinancialSummary } from "../services/financial-engine.js";
 import type { ConversationRow, ChatMessage } from "../types/index.js";
 
 const router = Router();
@@ -83,8 +84,8 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
     );
     const userName = userResult.rows[0]?.name || "sobrino";
 
-    // Build financial context (placeholder until financial engine is wired)
-    const financialContext = await buildFinancialContext(req.user!.userId);
+    // Build financial context from the financial engine
+    const financialContext = await buildFinancialSummary(req.user!.userId);
 
     // Prepare messages for Claude — last 20 messages per PRD spec
     const recentMessages = messages.slice(-20).map((m) => ({
@@ -153,43 +154,5 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
     }
   }
 });
-
-async function buildFinancialContext(userId: string): Promise<string> {
-  try {
-    // Gather whatever financial data exists for this user
-    const accounts = await pool.query(
-      "SELECT name, account_type, balance, currency FROM accounts WHERE user_id = $1",
-      [userId],
-    );
-    const goals = await pool.query(
-      "SELECT type, target_amount, current_amount, status FROM goals WHERE user_id = $1 AND status = 'active'",
-      [userId],
-    );
-
-    const parts: string[] = [];
-
-    if (accounts.rows.length > 0) {
-      const summary = accounts.rows
-        .map((a) => `- ${a.name} (${a.account_type}): $${Number(a.balance).toLocaleString("es-MX")} ${a.currency}`)
-        .join("\n");
-      parts.push(`Cuentas:\n${summary}`);
-    }
-
-    if (goals.rows.length > 0) {
-      const summary = goals.rows
-        .map((g) => `- ${g.type}: meta $${Number(g.target_amount).toLocaleString("es-MX")}, actual $${Number(g.current_amount).toLocaleString("es-MX")}`)
-        .join("\n");
-      parts.push(`Metas activas:\n${summary}`);
-    }
-
-    if (parts.length === 0) {
-      return "El usuario aún no ha conectado cuentas bancarias ni configurado metas financieras. Es un usuario nuevo — dale la bienvenida y ofrécele orientación inicial.";
-    }
-
-    return parts.join("\n\n");
-  } catch {
-    return "No se pudo cargar el contexto financiero del usuario.";
-  }
-}
 
 export default router;
