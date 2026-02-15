@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, FormEvent } from "react";
+import { useEffect, useRef, useState, useCallback, FormEvent } from "react";
 import { apiFetch, apiStream, SSEEvent } from "@/lib/api";
+import { subscribeToPush, isPushSubscribed, registerServiceWorker } from "@/lib/push";
 
 interface Message {
   role: "user" | "assistant";
@@ -17,12 +18,30 @@ interface SafeToSpend {
   hasData: boolean;
 }
 
+interface NotificationContext {
+  type: string;
+  notificationId?: string;
+  category?: string;
+  percent?: string;
+  goalId?: string;
+}
+
 const QUICK_ACTIONS = [
   { label: "¿Cuánto puedo gastar?", message: "¿Cuánto puedo gastar hoy?" },
   { label: "Mi deuda", message: "¿Cómo va mi deuda?" },
   { label: "Mis metas", message: "¿Cómo van mis metas financieras?" },
   { label: "Resumen del mes", message: "Dame un resumen de mis finanzas este mes" },
 ];
+
+// Context-aware messages for notification taps (PRD 7.3)
+const CONTEXT_MESSAGES: Record<string, (params: URLSearchParams) => string> = {
+  spending_alert: (params) =>
+    `Acabo de ver tu alerta sobre mi gasto en ${params.get("category") || "una categoría"}. ¿Qué puedo hacer?`,
+  debt_payment_reminder: () =>
+    "Vi tu recordatorio de pago de deuda. ¿Cómo voy con mi plan?",
+  quincena_checkin: () =>
+    "¡Llegó la quincena! ¿Cómo me fue y qué me recomiendas para estos 15 días?",
+};
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -31,10 +50,82 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [safeToSpend, setSafeToSpend] = useState<SafeToSpend | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showPushPrompt, setShowPushPrompt] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const contextHandled = useRef(false);
 
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  // Send a message with optional notification context
+  const sendMessageWithContext = useCallback(
+    async (text: string, context?: NotificationContext) => {
+      if (!text.trim() || streaming || !token) return;
+
+      const userMsg: Message = { role: "user", content: text.trim(), timestamp: new Date().toISOString() };
+      setMessages((prev) => [...prev, userMsg]);
+      setInput("");
+      setStreaming(true);
+
+      // Add placeholder for streaming assistant response
+      const assistantMsg: Message = { role: "assistant", content: "", timestamp: new Date().toISOString() };
+      setMessages((prev) => [...prev, assistantMsg]);
+
+      const body: Record<string, unknown> = { conversationId, message: text.trim() };
+      if (context) {
+        body.context = context;
+      }
+
+      try {
+        await apiStream(
+          "/api/chat/message",
+          body,
+          token,
+          (event: SSEEvent) => {
+            if (event.type === "text" && event.content) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, content: last.content + event.content };
+                }
+                return updated;
+              });
+            } else if (event.type === "done" && event.conversationId) {
+              setConversationId(event.conversationId);
+            } else if (event.type === "error") {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant" && last.content === "") {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: "Lo siento, hubo un error. Intenta de nuevo.",
+                  };
+                }
+                return updated;
+              });
+            }
+          },
+        );
+      } catch {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last.role === "assistant" && last.content === "") {
+            updated[updated.length - 1] = {
+              ...last,
+              content: "No se pudo conectar con el servidor. Verifica tu conexión.",
+            };
+          }
+          return updated;
+        });
+      } finally {
+        setStreaming(false);
+      }
+    },
+    [conversationId, streaming, token],
+  );
 
   // Auth guard + load conversation + safe-to-spend
   useEffect(() => {
@@ -57,72 +148,70 @@ export default function ChatPage() {
         window.location.href = "/login";
       })
       .finally(() => setLoading(false));
+
+    // Register service worker on load
+    registerServiceWorker().catch(() => {});
   }, [token]);
+
+  // Handle notification context from URL params (PRD 7.3)
+  useEffect(() => {
+    if (loading || contextHandled.current || !token) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const context = params.get("context");
+    const notificationId = params.get("notificationId");
+
+    if (!context) return;
+    contextHandled.current = true;
+
+    // Mark notification as opened
+    if (notificationId) {
+      apiFetch(`/api/notifications/${notificationId}/opened`, {
+        method: "PATCH",
+        token,
+      }).catch(() => {});
+    }
+
+    // Generate and send contextual message
+    const messageBuilder = CONTEXT_MESSAGES[context];
+    if (messageBuilder) {
+      const autoMessage = messageBuilder(params);
+      const notifContext: NotificationContext = {
+        type: context,
+        notificationId: notificationId || undefined,
+        category: params.get("category") || undefined,
+        percent: params.get("percent") || undefined,
+        goalId: params.get("goalId") || undefined,
+      };
+
+      // Small delay to ensure conversation is loaded
+      setTimeout(() => {
+        sendMessageWithContext(autoMessage, notifContext);
+      }, 300);
+    }
+
+    // Clean URL without reload
+    window.history.replaceState({}, "", "/chat");
+  }, [loading, token, sendMessageWithContext]);
+
+  // Show push notification prompt after first message exchange
+  useEffect(() => {
+    if (messages.length < 2) return;
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem("pushPromptDismissed")) return;
+
+    isPushSubscribed().then((subscribed) => {
+      if (!subscribed) setShowPushPrompt(true);
+    });
+  }, [messages.length]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function sendMessage(text: string) {
-    if (!text.trim() || streaming || !token) return;
-
-    const userMsg: Message = { role: "user", content: text.trim(), timestamp: new Date().toISOString() };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setStreaming(true);
-
-    // Add placeholder for streaming assistant response
-    const assistantMsg: Message = { role: "assistant", content: "", timestamp: new Date().toISOString() };
-    setMessages((prev) => [...prev, assistantMsg]);
-
-    try {
-      await apiStream(
-        "/api/chat/message",
-        { conversationId, message: text.trim() },
-        token,
-        (event: SSEEvent) => {
-          if (event.type === "text" && event.content) {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last.role === "assistant") {
-                updated[updated.length - 1] = { ...last, content: last.content + event.content };
-              }
-              return updated;
-            });
-          } else if (event.type === "done" && event.conversationId) {
-            setConversationId(event.conversationId);
-          } else if (event.type === "error") {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last.role === "assistant" && last.content === "") {
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: "Lo siento, hubo un error. Intenta de nuevo.",
-                };
-              }
-              return updated;
-            });
-          }
-        },
-      );
-    } catch {
-      setMessages((prev) => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last.role === "assistant" && last.content === "") {
-          updated[updated.length - 1] = {
-            ...last,
-            content: "No se pudo conectar con el servidor. Verifica tu conexión.",
-          };
-        }
-        return updated;
-      });
-    } finally {
-      setStreaming(false);
-    }
+  function sendMessage(text: string) {
+    sendMessageWithContext(text);
   }
 
   function handleSubmit(e: FormEvent) {
@@ -135,6 +224,21 @@ export default function ChatPage() {
       e.preventDefault();
       sendMessage(input);
     }
+  }
+
+  async function handleAcceptPush() {
+    if (token) {
+      const ok = await subscribeToPush(token);
+      setShowPushPrompt(false);
+      if (!ok) {
+        localStorage.setItem("pushPromptDismissed", "true");
+      }
+    }
+  }
+
+  function handleDismissPush() {
+    setShowPushPrompt(false);
+    localStorage.setItem("pushPromptDismissed", "true");
   }
 
   if (loading) {
@@ -171,6 +275,31 @@ export default function ChatPage() {
           </div>
         </div>
       </header>
+
+      {/* Push notification opt-in prompt */}
+      {showPushPrompt && (
+        <div className="flex-none border-b bg-blue-50 px-4 py-2.5">
+          <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+            <p className="text-sm text-blue-800">
+              ¿Quieres que te avise cuando algo importante pase con tu dinero?
+            </p>
+            <div className="flex flex-none gap-2">
+              <button
+                onClick={handleAcceptPush}
+                className="rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-blue-700"
+              >
+                Sí, avísame
+              </button>
+              <button
+                onClick={handleDismissPush}
+                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs text-gray-500 transition hover:bg-gray-50"
+              >
+                Ahora no
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <main className="flex-1 overflow-y-auto px-4 py-4">

@@ -5,7 +5,8 @@ import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
 import { buildSystemPrompt } from "../prompts/tio-richie.js";
 import { buildFinancialSummary } from "../services/financial-engine.js";
-import type { ConversationRow, ChatMessage } from "../types/index.js";
+import { markNotificationOpened } from "../services/push-notification.js";
+import type { ConversationRow, ChatMessage, GoalRow } from "../types/index.js";
 
 const router = Router();
 
@@ -35,8 +36,13 @@ router.get("/conversations", requireAuth, async (req, res) => {
 });
 
 // POST /api/chat/message — send a message, stream back Claude's response
+// Accepts optional context from notification tap (PRD 7.3)
 router.post("/message", requireAuth, async (req: Request, res: Response) => {
-  const { conversationId, message } = req.body;
+  const { conversationId, message, context } = req.body as {
+    conversationId?: string;
+    message: string;
+    context?: { type: string; notificationId?: string; category?: string; percent?: number; goalId?: string };
+  };
 
   if (!message || typeof message !== "string" || message.trim().length === 0) {
     res.status(400).json({ error: "El mensaje no puede estar vacío" });
@@ -44,8 +50,13 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
   }
 
   try {
+    // Mark notification as opened if coming from a push notification
+    if (context?.notificationId) {
+      await markNotificationOpened(context.notificationId, req.user!.userId).catch(() => {});
+    }
+
     // Load or create conversation
-    let convoId = conversationId;
+    let convoId: string | undefined = conversationId;
     let messages: ChatMessage[] = [];
 
     if (convoId) {
@@ -56,7 +67,7 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
       if (result.rows.length > 0) {
         messages = result.rows[0].messages;
       } else {
-        convoId = null;
+        convoId = undefined;
       }
     }
 
@@ -87,6 +98,12 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
     // Build financial context from the financial engine
     const financialContext = await buildFinancialSummary(req.user!.userId);
 
+    // Build notification context if the message comes from a notification tap (PRD 7.3)
+    let notificationContext: string | undefined;
+    if (context?.type) {
+      notificationContext = await buildNotificationContext(req.user!.userId, context);
+    }
+
     // Prepare messages for Claude — last 20 messages per PRD spec
     const recentMessages = messages.slice(-20).map((m) => ({
       role: m.role as "user" | "assistant",
@@ -106,7 +123,7 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
     const stream = anthropic.messages.stream({
       model: "claude-sonnet-4-5-20250929",
       max_tokens: 1024,
-      system: buildSystemPrompt(userName, financialContext),
+      system: buildSystemPrompt(userName, financialContext, notificationContext),
       messages: recentMessages,
     });
 
@@ -154,5 +171,67 @@ router.post("/message", requireAuth, async (req: Request, res: Response) => {
     }
   }
 });
+
+// --- Build notification context for system prompt enrichment (PRD 7.3) ---
+
+async function buildNotificationContext(
+  userId: string,
+  context: { type: string; category?: string; percent?: number; goalId?: string },
+): Promise<string> {
+  const parts: string[] = [];
+
+  if (context.type === "spending_alert" && context.category) {
+    // Fetch budget details for the category
+    const budgetResult = await pool.query<{ categories: Array<{ name: string; limit: number }> }>(
+      "SELECT categories FROM budgets WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+      [userId],
+    );
+    const categories = budgetResult.rows[0]?.categories || [];
+    const catBudget = categories.find((c) => c.name === context.category);
+
+    // Fetch actual spending
+    const { getCurrentQuincena, formatDateForDb } = await import("../services/financial-engine.js");
+    const period = getCurrentQuincena();
+    const spentResult = await pool.query<{ total: string }>(
+      `SELECT COALESCE(SUM(ABS(amount)), 0) as total
+       FROM transactions WHERE user_id = $1 AND category = $2 AND amount < 0
+       AND date >= $3 AND date <= $4`,
+      [userId, context.category, formatDateForDb(period.start), formatDateForDb(period.end)],
+    );
+    const spent = Number(spentResult.rows[0].total);
+
+    parts.push(`ALERTA DE GASTO: El usuario ha gastado $${spent.toLocaleString("es-MX")} en ${context.category} esta quincena.`);
+    if (catBudget) {
+      parts.push(`Presupuesto para ${context.category}: $${catBudget.limit.toLocaleString("es-MX")}. Porcentaje usado: ${context.percent || Math.round((spent / catBudget.limit) * 100)}%.`);
+    }
+    parts.push("El usuario necesita coaching sobre cómo ajustar su gasto en esta categoría o redistribuir su presupuesto.");
+  }
+
+  if (context.type === "debt_payment_reminder" && context.goalId) {
+    const goalResult = await pool.query<GoalRow>(
+      "SELECT * FROM goals WHERE id = $1 AND user_id = $2 AND type = 'debt_payoff'",
+      [context.goalId, userId],
+    );
+    if (goalResult.rows.length > 0) {
+      const goal = goalResult.rows[0];
+      const balance = Number(goal.current_balance);
+      const minPay = Number(goal.minimum_payment);
+      const rate = Number(goal.interest_rate) * 100;
+      parts.push(`RECORDATORIO DE PAGO: Deuda con saldo de $${balance.toLocaleString("es-MX")}, tasa ${rate.toFixed(1)}% anual.`);
+      parts.push(`Pago mínimo: $${minPay.toLocaleString("es-MX")}. Día de vencimiento: ${goal.payment_due_day}.`);
+      if (goal.strategy) {
+        parts.push(`Estrategia activa: ${goal.strategy}.`);
+      }
+      parts.push("Anima al usuario a pagar más del mínimo si es posible y muéstrale el impacto en su plan de pago.");
+    }
+  }
+
+  if (context.type === "quincena_checkin") {
+    parts.push("CHECK-IN DE QUINCENA: El usuario acaba de recibir su quincena y quiere revisar su plan financiero.");
+    parts.push("Haz un resumen de cómo le fue la quincena pasada y ayúdalo a planear los próximos 15 días.");
+  }
+
+  return parts.join("\n");
+}
 
 export default router;

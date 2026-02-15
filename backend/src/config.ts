@@ -12,4 +12,9 @@ export const config = {
     webhookSecret: process.env.FINERIO_WEBHOOK_SECRET || "",
   },
   maxCsvSizeMb: 5,
+  vapid: {
+    publicKey: process.env.VAPID_PUBLIC_KEY || "",
+    privateKey: process.env.VAPID_PRIVATE_KEY || "",
+    subject: process.env.VAPID_SUBJECT || "mailto:soporte@tiorichie.com",
+  },
 };

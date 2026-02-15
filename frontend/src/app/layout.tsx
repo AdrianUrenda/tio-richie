@@ -1,9 +1,14 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Tío Richie",
   description: "Tu coach de finanzas personales",
+  manifest: "/manifest.json",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#2563eb",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

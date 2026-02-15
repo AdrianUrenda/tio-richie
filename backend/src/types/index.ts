@@ -131,3 +131,109 @@ export interface CategoryResult {
   isRecurring: boolean;
   isIncome: boolean;
 }
+
+// --- Push subscriptions ---
+
+export interface PushSubscriptionRow {
+  id: string;
+  user_id: string;
+  endpoint: string;
+  keys_p256dh: string;
+  keys_auth: string;
+  user_agent: string | null;
+  created_at: string;
+}
+
+// --- Notifications ---
+
+export interface NotificationRow {
+  id: string;
+  user_id: string;
+  type: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  sent_at: string | null;
+  opened_at: string | null;
+  status: string;
+  created_at: string;
+}
+
+export type NotificationType =
+  | "spending_alert"
+  | "debt_payment_reminder"
+  | "quincena_checkin";
+
+// --- Debt analysis ---
+
+export interface DebtInfo {
+  goalId: string;
+  name: string;
+  currentBalance: number;
+  interestRate: number; // annual decimal, e.g. 0.365 for 36.5%
+  minimumPayment: number;
+  paymentDueDay: number;
+}
+
+export interface DebtMilestone {
+  month: number;
+  balance: number;
+  interestPaid: number;
+  cumulativeInterest: number;
+}
+
+export interface DebtPayoffDetail {
+  name: string;
+  goalId: string;
+  payoffOrder: number;
+  monthsToPayoff: number;
+  totalInterestPaid: number;
+  totalPaid: number;
+  milestones: DebtMilestone[];
+}
+
+export interface DebtPayoffStrategy {
+  method: "avalanche" | "snowball";
+  debts: DebtPayoffDetail[];
+  totalMonths: number;
+  totalInterestPaid: number;
+  totalPaid: number;
+  monthlyPayment: number;
+}
+
+export interface DebtComparisonResult {
+  avalanche: DebtPayoffStrategy;
+  snowball: DebtPayoffStrategy;
+  interestSaved: number;
+  timeDifference: number;
+}
+
+export interface DetectedDebt {
+  accountId: string;
+  accountName: string;
+  currentBalance: number;
+  estimatedInterestRate: number | null;
+  estimatedMinimumPayment: number | null;
+  confidence: "high" | "low";
+}
+
+// --- Goal row (extended with debt fields) ---
+
+export interface GoalRow {
+  id: string;
+  user_id: string;
+  type: string;
+  target_amount: string | null;
+  current_amount: string;
+  deadline: string | null;
+  strategy: string | null;
+  status: string;
+  priority: number;
+  interest_rate: string | null;
+  minimum_payment: string | null;
+  current_balance: string | null;
+  payment_due_day: number | null;
+  debt_account_id: string | null;
+  milestones: DebtMilestone[];
+  created_at: string;
+  updated_at: string;
+}

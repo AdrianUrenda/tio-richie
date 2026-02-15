@@ -299,9 +299,51 @@ export async function buildFinancialSummary(userId: string): Promise<string> {
     parts.push(`Metas activas:\n${summary}`);
   }
 
+  // Debt payoff goals (extended detail for coaching)
+  const debtSummary = await buildDebtSummary(userId);
+  if (debtSummary) {
+    parts.push(debtSummary);
+  }
+
   if (parts.length === 0) {
     return "El usuario aún no ha conectado cuentas bancarias ni configurado metas financieras. Es un usuario nuevo — dale la bienvenida y ofrécele orientación inicial.";
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Build a summary of active debt payoff goals for LLM context.
+ * The LLM uses this to coach on debt — it never computes these numbers.
+ */
+export async function buildDebtSummary(userId: string): Promise<string | null> {
+  const debts = await pool.query<{
+    id: string;
+    strategy: string | null;
+    current_balance: string | null;
+    target_amount: string | null;
+    interest_rate: string | null;
+    minimum_payment: string | null;
+    payment_due_day: number | null;
+    milestones: Array<{ month: number; balance: number }>;
+  }>(
+    "SELECT id, strategy, current_balance, target_amount, interest_rate, minimum_payment, payment_due_day, milestones FROM goals WHERE user_id = $1 AND type = 'debt_payoff' AND status = 'active'",
+    [userId],
+  );
+
+  if (debts.rows.length === 0) return null;
+
+  const lines = debts.rows.map((d) => {
+    const balance = Number(d.current_balance || 0);
+    const target = Number(d.target_amount || balance);
+    const pct = target > 0 ? Math.round(((target - balance) / target) * 100) : 0;
+    const rate = d.interest_rate ? `${(Number(d.interest_rate) * 100).toFixed(1)}%` : "sin tasa";
+    const minPay = d.minimum_payment ? `$${Number(d.minimum_payment).toLocaleString("es-MX")}/mes` : "sin dato";
+    const strategy = d.strategy || "sin estrategia";
+    const dueDay = d.payment_due_day ? `día ${d.payment_due_day}` : "sin fecha";
+
+    return `- Deuda: saldo $${balance.toLocaleString("es-MX")}, ${pct}% pagado, tasa ${rate}, pago mínimo ${minPay}, vence ${dueDay}, estrategia: ${strategy}`;
+  });
+
+  return `Deudas activas (plan de pago):\n${lines.join("\n")}`;
 }
