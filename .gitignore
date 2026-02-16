@@ -21,6 +21,7 @@
 # misc
 .DS_Store
 *.pem
+PRD_extracted.txt
 
 # debug
 npm-debug.log*
