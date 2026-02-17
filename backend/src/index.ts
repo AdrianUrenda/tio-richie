@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { testConnection } from "./db.js";
 import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
+import { chatRoutes } from "./routes/chat.js";
 
 async function main(): Promise<void> {
   const app = Fastify({
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
 
   await app.register(healthRoutes);
   await app.register(authRoutes);
+  await app.register(chatRoutes);
 
   try {
     await testConnection();

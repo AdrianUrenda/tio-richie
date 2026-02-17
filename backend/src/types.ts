@@ -51,6 +51,34 @@ export interface UserPublic {
   createdAt: string;
 }
 
+// Chat types
+
+export interface ConversationRow {
+  id: string;
+  user_id: string;
+  messages: ConversationMessage[];
+  token_count: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+export interface ChatMessageBody {
+  message: string;
+  conversationId?: string;
+}
+
+export interface SafeToSpendResponse {
+  amount: number | null;
+  label: string;
+  hasFinancialData: boolean;
+}
+
 // JWT payload
 
 export interface JwtAccessPayload {
